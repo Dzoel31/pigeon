@@ -64,6 +64,80 @@ def _truncate_output(text: str, limit: int = 1800) -> str:
     return text[: limit - 50] + "\n... (truncated) ..."
 
 
+def _extract_version_from_message(message: str) -> str:
+    match = re.search(r"v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", message)
+    if match:
+        return match.group(1)
+
+    last_token = message.split(" ")[-1] if message else ""
+    return last_token.lstrip("v")
+
+
+def _normalize_release_body(body: str | None, limit: int = 900) -> str:
+    if not body:
+        return ""
+
+    cleaned_lines: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == "---":
+            continue
+        if stripped.startswith("**Detailed Changes**"):
+            continue
+        cleaned_lines.append(stripped)
+
+    cleaned_body = "\n".join(cleaned_lines).strip()
+    return _truncate_output(cleaned_body, limit=limit) if cleaned_body else ""
+
+
+def _get_release_description(payload: Any, version: str) -> str:
+    file_path = Path("data") / "release.json"
+    if not file_path.exists():
+        return ""
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            release_events = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    if not isinstance(release_events, list):
+        release_events = [release_events]
+
+    target_repo = getattr(getattr(payload, "repository", None), "full_name", "")
+    normalized_version = version.lstrip("v")
+    allowed_actions = {"released", "published", "prereleased"}
+
+    for event in reversed(release_events):
+        if not isinstance(event, dict):
+            continue
+
+        if event.get("action") not in allowed_actions:
+            continue
+
+        repo_full_name = event.get("repository", {}).get("full_name", "")
+        if target_repo and repo_full_name and repo_full_name != target_repo:
+            continue
+
+        release_info = event.get("release", {})
+        if not isinstance(release_info, dict):
+            continue
+
+        tag_name = str(release_info.get("tag_name", "")).lstrip("v")
+        release_name = str(release_info.get("name", "")).lstrip("v")
+
+        if normalized_version and normalized_version not in {tag_name, release_name}:
+            continue
+
+        description = _normalize_release_body(release_info.get("body"))
+        if description:
+            return description
+
+    return ""
+
+
 def _run_command(cmd: list[str], work_dir: Path) -> str:
     result = subprocess.run(
         cmd,
@@ -463,9 +537,17 @@ async def webhook_handler(request: Request, background_tasks: BackgroundTasks):
                     and model.workflow_run.conclusion == "success"
                 ):
                     announce_template = env_template.get_template("announce_docs.j2")
-                    version = model.workflow_run.head_commit.message.split(" ")[-1]
+                    version = _extract_version_from_message(
+                        model.workflow_run.head_commit.message
+                    )
+                    release_description = _get_release_description(model, version)
+                    release_description_json = json.dumps(
+                        release_description or "No release notes available."
+                    )[1:-1]
                     announce_content = announce_template.render(
-                        data=model, version=version
+                        data=model,
+                        version=version,
+                        release_description_json=release_description_json,
                     )
 
                     announce_payload = json.loads(announce_content)
@@ -679,9 +761,17 @@ async def send_test_message(event: str, background_tasks: BackgroundTasks):
                     and model.workflow_run.conclusion == "success"
                 ):
                     announce_template = env_template.get_template("announce_docs.j2")
-                    version = model.workflow_run.head_commit.message.split(" ")[-1]
+                    version = _extract_version_from_message(
+                        model.workflow_run.head_commit.message
+                    )
+                    release_description = _get_release_description(model, version)
+                    release_description_json = json.dumps(
+                        release_description or "No release notes available."
+                    )[1:-1]
                     announce_content = announce_template.render(
-                        data=model, version=version
+                        data=model,
+                        version=version,
+                        release_description_json=release_description_json,
                     )
 
                     announce_payload = json.loads(announce_content)

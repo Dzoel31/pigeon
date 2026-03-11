@@ -12,7 +12,8 @@
         {"name": "Repo", "value": "{{ data.repository.full_name }}", "inline": true},
         {"name": "Version", "value": "{{ 'v' ~ version }}", "inline": true},
         {"name": "Deployer", "value": "{{ data.workflow_run.actor.login }}", "inline": true},
-        {"name": "Status", "value": "{{ '✅ Sukses' if data.workflow_run.conclusion == 'success' else '❌ Gagal' }}", "inline": true}
+        {"name": "Status", "value": "{{ '✅ Sukses' if data.workflow_run.conclusion == 'success' else '❌ Gagal' }}", "inline": true},
+        {"name": "Changes", "value": "{{ release_description_json }}", "inline": false}
       ],
       "footer": {
         "text": "Time: {{ data.workflow_run.updated_at | default('Unknown') }}"
